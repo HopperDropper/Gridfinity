@@ -37,32 +37,86 @@ def calculate_baseplates(printer_x, printer_y, space_x, space_y, grid_size=42):
                 layout[y:y + baseplate_y, x:x + baseplate_x] = color_index
                 color_index += 1
 
+    leftover_x = round(space_x - int(total_units_x) * grid_size, 1)
+    leftover_y = round(space_y - int(total_units_y) * grid_size, 1)
+
+    # Calculate the bill of materials with specific padding for each plate
     for color in range(1, color_index):
         ys, xs = np.where(layout == color)
         if len(xs) > 0 and len(ys) > 0:
             width = xs.max() - xs.min() + 1
             height = ys.max() - ys.min() + 1
             size_key = f"{width}x{height}"
+
             if size_key in bill_of_materials:
                 bill_of_materials[size_key] += 1
             else:
                 bill_of_materials[size_key] = 1
 
-    leftover_x = round(space_x - int(total_units_x) * grid_size, 1)
-    leftover_y = round(space_y - int(total_units_y) * grid_size, 1)
-
     return layout, bill_of_materials, leftover_x, leftover_y, int(total_units_x), int(total_units_y), int(max_units_x), int(max_units_y)
 
-def calculate_padding(leftover_x, leftover_y, option="Justify"):
-    if option == "Justify":
+def calculate_padding(leftover_x, leftover_y, option="Do Not Calculate Padding"):
+    if option == "Corner Justify":
         pad_left = 0
         pad_right = leftover_x
-        pad_bottom = 0
-        pad_top = leftover_y
+        pad_bottom = leftover_y  # Flipped from previous
+        pad_top = 0  # Flipped from previous
     elif option == "Center":
         pad_left = pad_right = leftover_x / 2
-        pad_bottom = pad_top = leftover_y / 2
+        pad_bottom = pad_top = leftover_y / 2  # Flipped from previous
+    else:
+        pad_left = pad_right = pad_bottom = pad_top = 0  # Default to 0 padding
     return pad_left, pad_right, pad_bottom, pad_top
+
+def add_padding_to_bom(layout, leftover_x, leftover_y, total_units_x, total_units_y, padding_option):
+    bill_of_materials_with_padding = {}
+    for color in np.unique(layout):
+        if color == 0:
+            continue
+
+        ys, xs = np.where(layout == color)
+        if len(xs) > 0 and len(ys) > 0:
+            width = xs.max() - xs.min() + 1
+            height = ys.max() - ys.min() + 1
+            size_key = f"{width}x{height}"
+
+            # Initialize padding variables
+            pad_left = pad_right = pad_bottom = pad_top = 0
+
+            # Determine which sides are exposed to leftover space based on padding option
+            if padding_option == "Corner Justify":
+                pad_right = leftover_x if xs.max() == total_units_x - 1 else 0
+                pad_bottom = leftover_y if ys.max() == total_units_y - 1 else 0  # Flipped from previous
+            elif padding_option == "Center":
+                if xs.min() == 0:
+                    pad_left = leftover_x / 2
+                if xs.max() == total_units_x - 1:
+                    pad_right = leftover_x / 2
+                if ys.min() == 0:
+                    pad_top = leftover_y / 2  # Flipped from previous
+                if ys.max() == total_units_y - 1:
+                    pad_bottom = leftover_y / 2  # Flipped from previous
+
+            padding_info = []
+            if pad_bottom:
+                padding_info.append(f"{pad_bottom}mm Bottom")  # Adjusted
+            if pad_right:
+                padding_info.append(f"{pad_right}mm Right")
+            if pad_left:
+                padding_info.append(f"{pad_left}mm Left")
+            if pad_top:
+                padding_info.append(f"{pad_top}mm Top")  # Adjusted
+
+            padding_str = ", ".join(padding_info) if padding_info else "No Padding"
+
+            full_key = f"{size_key} ({padding_str})"
+
+            if full_key in bill_of_materials_with_padding:
+                bill_of_materials_with_padding[full_key] += 1
+            else:
+                bill_of_materials_with_padding[full_key] = 1
+
+    return bill_of_materials_with_padding
 
 st.title("Gridfinity Baseplate Layout Calculator - Optimized to Avoid Any 1x Dimension Baseplates")
 
@@ -82,6 +136,12 @@ printer_y_mm = convert_to_mm(printer_y, printer_units)
 space_x_mm = convert_to_mm(space_x, space_units)
 space_y_mm = convert_to_mm(space_y, space_units)
 
+# Padding calculation options with descriptions
+padding_option = st.selectbox("Select Padding Option:", ["Do Not Calculate Padding", "Corner Justify", "Center"],
+                              format_func=lambda x: "No Padding Calculation" if x == "Do Not Calculate Padding"
+                              else "Align to Top-Left Corner (No Padding on Left/Top)" if x == "Corner Justify"
+                              else "Center the Grid (Equal Padding on All Sides)")
+
 if st.button("Calculate Layout"):
     layout, bill_of_materials, leftover_x, leftover_y, total_units_x, total_units_y, max_units_x, max_units_y = calculate_baseplates(printer_x_mm, printer_y_mm, space_x_mm, space_y_mm)
 
@@ -92,15 +152,21 @@ if st.button("Calculate Layout"):
     max_plate_size = f"{max_units_x}x{max_units_y} Gridfinity units"
     st.write(f"Maximum Plate Size Your Printer Can Handle: {max_plate_size}")
 
+    # Display Bill of Materials
     st.write("Bill of Materials:")
-    for size, quantity in bill_of_materials.items():
-        st.write(f"{quantity} x {size}")
+    if padding_option == "Do Not Calculate Padding":
+        for size, quantity in bill_of_materials.items():
+            st.write(f"{quantity} x {size}")
+    else:
+        # Calculate padding and display padded bill of materials
+        bill_of_materials_with_padding = add_padding_to_bom(layout, leftover_x, leftover_y, total_units_x, total_units_y, padding_option)
+        for full_key, quantity in bill_of_materials_with_padding.items():
+            st.write(f"{quantity} x {full_key}")
 
-    # Padding calculation options
-    padding_option = st.selectbox("Select Padding Option:", ["Justify", "Center"])
+    # Display Padding Details if applicable
     pad_left, pad_right, pad_bottom, pad_top = calculate_padding(leftover_x, leftover_y, padding_option)
-
-    st.write(f"Padding (Left, Right, Bottom, Top): {pad_left} mm, {pad_right} mm, {pad_bottom} mm, {pad_top} mm")
+    if padding_option != "Do Not Calculate Padding":
+        st.write(f"Padding Details: \n- Left: {pad_left} mm\n- Right: {pad_right} mm\n- Bottom: {pad_bottom} mm\n- Top: {pad_top} mm")
 
     fig, ax = plt.subplots()
     ax.imshow(layout, cmap='tab20', origin='lower', extent=[0, total_units_x * 42, 0, total_units_y * 42])
@@ -109,9 +175,16 @@ if st.button("Calculate Layout"):
     ax.set_yticks(np.arange(0, total_units_y * 42 + 42, 42))
     ax.set_aspect('equal', adjustable='box')
 
-    # Adjust plot limits based on padding
-    ax.set_xlim(-pad_left, total_units_x * 42 + pad_right)
-    ax.set_ylim(-pad_bottom, total_units_y * 42 + pad_top)
+    # Adjust plot limits based on padding, only if padding is calculated
+    if padding_option != "Do Not Calculate Padding":
+        ax.set_xlim(-pad_left, total_units_x * 42 + pad_right)
+        ax.set_ylim(-pad_bottom, total_units_y * 42 + pad_top)
+    
+    # Adjust axis text size and rotate X-axis text
+    ax.tick_params(axis='both', which='major', labelsize=8)
+    plt.xticks(rotation=90)
 
+    # Ensure Y-axis starts at the bottom
     ax.invert_yaxis()
+
     st.pyplot(fig)

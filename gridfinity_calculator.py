@@ -8,63 +8,110 @@ def convert_to_mm(value, units):
         return value * 25.4
     return value
 
+def build_plate_matrix(total_units_x, total_units_y, max_units_x, max_units_y):
+    plate_matrix = np.zeros((total_units_y, total_units_x), dtype=int)
+    plate_counter = 1
+    
+    for y in range(0, total_units_y, max_units_y):
+        for x in range(0, total_units_x, max_units_x):
+            plate_x = min(max_units_x, total_units_x - x)
+            plate_y = min(max_units_y, total_units_y - y)
+            
+            # Prevent the last row/column from being a 1x dimension
+            if plate_x == 1 and x > 0:
+                plate_matrix[y:y + plate_y, x - 1:x + 1] = plate_counter
+            elif plate_y == 1 and y > 0:
+                plate_matrix[y - 1:y + 1, x:x + plate_x] = plate_counter
+            else:
+                plate_matrix[y:y + plate_y, x:x + plate_x] = plate_counter
+
+            plate_counter += 1
+    
+    return plate_matrix, plate_counter - 1
+
+def determine_padding(plate_matrix, leftover_x, leftover_y, padding_option):
+    y, x = plate_matrix.shape
+    unique_plates = np.unique(plate_matrix)
+    bill_of_materials_with_padding = {}
+
+    for plate in unique_plates:
+        if plate == 0:
+            continue
+        
+        # Find the bounding box of this plate
+        rows, cols = np.where(plate_matrix == plate)
+        min_row, max_row = rows.min(), rows.max()
+        min_col, max_col = cols.min(), cols.max()
+
+        plate_x = max_col - min_col + 1
+        plate_y = max_row - min_row + 1
+
+        padding_info = []
+        if padding_option == "Corner Justify":
+            if max_col == x - 1 and leftover_x > 0:  # Rightmost plate
+                padding_info.append(f"{round(leftover_x, 1)}mm Right")
+            if max_row == y - 1 and leftover_y > 0:  # Topmost plate
+                padding_info.append(f"{round(leftover_y, 1)}mm Top")
+        elif padding_option == "Center Justify":
+            if min_col == 0 and leftover_x > 0:  # Leftmost plate
+                padding_info.append(f"{round(leftover_x / 2, 1)}mm Left")
+            if max_col == x - 1 and leftover_x > 0:  # Rightmost plate
+                padding_info.append(f"{round(leftover_x / 2, 1)}mm Right")
+            if min_row == 0 and leftover_y > 0:  # Bottommost plate
+                padding_info.append(f"{round(leftover_y / 2, 1)}mm Bottom")
+            if max_row == y - 1 and leftover_y > 0:  # Topmost plate
+                padding_info.append(f"{round(leftover_y / 2, 1)}mm Top")
+
+        plate_key = f"{plate_x}x{plate_y}"
+        if padding_info:
+            plate_key += f" ({', '.join(padding_info)})"
+        
+        if plate_key in bill_of_materials_with_padding:
+            bill_of_materials_with_padding[plate_key] += 1
+        else:
+            bill_of_materials_with_padding[plate_key] = 1
+
+    return bill_of_materials_with_padding
+
 def calculate_baseplates(printer_x, printer_y, space_x, space_y, grid_size=42):
-    total_units_x = space_x / grid_size
-    total_units_y = space_y / grid_size
+    total_units_x = int(space_x // grid_size)
+    total_units_y = int(space_y // grid_size)
 
-    max_units_x = printer_x / grid_size
-    max_units_y = printer_y / grid_size
+    max_units_x = int(printer_x // grid_size)
+    max_units_y = int(printer_y // grid_size)
 
-    layout = np.zeros((int(total_units_y), int(total_units_x)), dtype=int)
+    layout = np.zeros((total_units_y, total_units_x), dtype=int)
+
+    plate_matrix, _ = build_plate_matrix(total_units_x, total_units_y, max_units_x, max_units_y)
+
+    leftover_x = space_x - total_units_x * grid_size
+    leftover_y = space_y - total_units_y * grid_size
+
+    return plate_matrix, leftover_x, leftover_y, total_units_x, total_units_y, max_units_x, max_units_y
+
+def summarize_bom(plate_matrix):
+    y, x = plate_matrix.shape
+    unique_plates = np.unique(plate_matrix)
     bill_of_materials = {}
 
-    color_index = 1
+    for plate in unique_plates:
+        if plate == 0:
+            continue
 
-    # Step 1: Fill the grid with the largest possible baseplates
-    for y in range(0, int(total_units_y), int(max_units_y)):
-        for x in range(0, int(total_units_x), int(max_units_x)):
-            baseplate_x = min(int(max_units_x), int(total_units_x) - x)
-            baseplate_y = min(int(max_units_y), int(total_units_y) - y)
+        rows, cols = np.where(plate_matrix == plate)
+        min_row, max_row = rows.min(), rows.max()
+        min_col, max_col = cols.min(), cols.max()
 
-            # Detect if the last row or column will result in a 1x unit
-            if (int(total_units_x) - x == 1 and x > 0) or (int(total_units_y) - y == 1 and y > 0):
-                if int(total_units_x) - x == 1:
-                    layout[y:y + baseplate_y, x - 1:x + 1] = color_index
-                elif int(total_units_y) - y == 1:
-                    layout[y - 1:y + 1, x:x + baseplate_x] = color_index
-                color_index += 1
-            else:
-                layout[y:y + baseplate_y, x:x + baseplate_x] = color_index
-                color_index += 1
+        plate_x = max_col - min_col + 1
+        plate_y = max_row - min_row + 1
 
-    for color in range(1, color_index):
-        ys, xs = np.where(layout == color)
-        if len(xs) > 0 and len(ys) > 0:
-            width = xs.max() - xs.min() + 1
-            height = ys.max() - ys.min() + 1
-            size_key = f"{width}x{height}"
-            if size_key in bill_of_materials:
-                bill_of_materials[size_key] += 1
-            else:
-                bill_of_materials[size_key] = 1
+        plate_key = f"{plate_x}x{plate_y}"
+        if plate_key in bill_of_materials:
+            bill_of_materials[plate_key] += 1
+        else:
+            bill_of_materials[plate_key] = 1
 
-    leftover_x = round(space_x - int(total_units_x) * grid_size, 1)
-    leftover_y = round(space_y - int(total_units_y) * grid_size, 1)
-
-    return layout, bill_of_materials, leftover_x, leftover_y, int(total_units_x), int(total_units_y), int(max_units_x), int(max_units_y)
-
-def calculate_padding(leftover_x, leftover_y, option="Do Not Calculate Padding"):
-    if option == "Corner Justify":
-        pad_left = 0
-        pad_right = leftover_x
-        pad_bottom = 0
-        pad_top = leftover_y
-    elif option == "Center":
-        pad_left = pad_right = leftover_x / 2
-        pad_bottom = pad_top = leftover_y / 2
-    else:
-        pad_left = pad_right = pad_bottom = pad_top = 0
-    return pad_left, pad_right, pad_bottom, pad_top
+    return bill_of_materials
 
 st.title("Gridfinity Baseplate Layout Calculator - Optimized to Avoid Any 1x Dimension Baseplates")
 
@@ -84,44 +131,49 @@ printer_y_mm = convert_to_mm(printer_y, printer_units)
 space_x_mm = convert_to_mm(space_x, space_units)
 space_y_mm = convert_to_mm(space_y, space_units)
 
-# Padding calculation options with descriptions
-padding_option = st.selectbox("Select Padding Option:", ["Do Not Calculate Padding", "Corner Justify", "Center"],
-                              format_func=lambda x: "No Padding Calculation" if x == "Do Not Calculate Padding"
-                              else "Align to Top-Left Corner (No Padding on Left/Bottom)" if x == "Corner Justify"
-                              else "Center the Grid (Equal Padding on All Sides)")
+# Padding option dropdown
+padding_option = st.selectbox("Select Padding Calculation Option:", ["Corner Justify", "Center Justify", "No Padding Calculation"])
 
 if st.button("Calculate Layout"):
-    layout, bill_of_materials, leftover_x, leftover_y, total_units_x, total_units_y, max_units_x, max_units_y = calculate_baseplates(printer_x_mm, printer_y_mm, space_x_mm, space_y_mm)
+    layout, leftover_x, leftover_y, total_units_x, total_units_y, max_units_x, max_units_y = calculate_baseplates(printer_x_mm, printer_y_mm, space_x_mm, space_y_mm)
 
     st.write(f"Total Fill Area Gridfinity units (X x Y): {total_units_x} x {total_units_y}")
-    st.write(f"Leftover X distance: {leftover_x} mm")
-    st.write(f"Leftover Y distance: {leftover_y} mm")
+    st.write(f"Leftover X distance: {round(leftover_x, 1)} mm")
+    st.write(f"Leftover Y distance: {round(leftover_y, 1)} mm")
     
     max_plate_size = f"{max_units_x}x{max_units_y} Gridfinity units"
     st.write(f"Maximum Plate Size Your Printer Can Handle: {max_plate_size}")
 
-    # Calculate padding based on the selected option
-    pad_left, pad_right, pad_bottom, pad_top = calculate_padding(leftover_x, leftover_y, padding_option)
-
-    # Display Bill of Materials
-    st.write("Bill of Materials:")
-    for size, quantity in bill_of_materials.items():
-        st.write(f"{quantity} x {size}")
-
-    # Display Padding Details if applicable
-    if padding_option != "Do Not Calculate Padding":
-        st.write(f"Padding Details: \n- Left: {pad_left} mm\n- Right: {pad_right} mm\n- Bottom: {pad_bottom} mm\n- Top: {pad_top} mm")
+    if padding_option != "No Padding Calculation":
+        bill_of_materials_with_padding = determine_padding(layout, leftover_x, leftover_y, padding_option)
+        st.write("Bill of Materials with Padding:")
+        for size, quantity in bill_of_materials_with_padding.items():
+            st.write(f"{quantity} x {size}")
+    else:
+        # Summarize the plates without padding
+        bill_of_materials = summarize_bom(layout)
+        st.write("Bill of Materials:")
+        for size, quantity in bill_of_materials.items():
+            st.write(f"{quantity} x {size}")
 
     fig, ax = plt.subplots()
-    ax.imshow(layout, cmap='tab20', origin='lower', extent=[0, total_units_x * 42, 0, total_units_y * 42])
-    ax.grid(True, which='both', color='black', linestyle='--', linewidth=0.5)
-    ax.set_xticks(np.arange(0, total_units_x * 42 + 42, 42))
-    ax.set_yticks(np.arange(0, total_units_y * 42 + 42, 42))
+
+    # Plot the leftover space in grey
+    ax.add_patch(plt.Rectangle((0, 0), space_x_mm, space_y_mm, edgecolor='black', facecolor='lightgrey', lw=2))
+
+    # Plot the layout on top of the grey background
+    ax.imshow(layout, cmap='tab20', origin='lower', extent=[0, total_units_x * 42, 0, total_units_y * 42], zorder=2)
+
+    # Manually draw the gridlines on top of everything
+    for y in np.arange(0, total_units_y * 42 + 42, 42):
+        ax.hlines(y, 0, total_units_x * 42, color='white', linewidth=1.5, zorder=4)
+    for x in np.arange(0, total_units_x * 42 + 42, 42):
+        ax.vlines(x, 0, total_units_y * 42, color='white', linewidth=1.5, zorder=4)
+
+    ax.set_xlim(-leftover_x / 2 if padding_option == "Center Justify" else 0,
+                total_units_x * 42 + leftover_x / 2 if padding_option == "Center Justify" else total_units_x * 42 + leftover_x)
+    ax.set_ylim(-leftover_y / 2 if padding_option == "Center Justify" else 0,
+                total_units_y * 42 + leftover_y / 2 if padding_option == "Center Justify" else total_units_y * 42 + leftover_y)
     ax.set_aspect('equal', adjustable='box')
 
-    # Adjust plot limits based on padding
-    ax.set_xlim(-pad_left, total_units_x * 42 + pad_right)
-    ax.set_ylim(-pad_bottom, total_units_y * 42 + pad_top)
-
-    ax.invert_yaxis()
     st.pyplot(fig)

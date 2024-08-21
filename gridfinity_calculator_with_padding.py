@@ -53,8 +53,8 @@ def calculate_baseplates(printer_x, printer_y, space_x, space_y, grid_size=42):
 
     return layout, bill_of_materials, leftover_x, leftover_y, int(total_units_x), int(total_units_y), int(max_units_x), int(max_units_y)
 
-def calculate_padding(leftover_x, leftover_y, option="Do Not Calculate Padding"):
-    if option == "Corner Justify":
+def calculate_padding(leftover_x, leftover_y, option="Justify"):
+    if option == "Justify":
         pad_left = 0
         pad_right = leftover_x
         pad_bottom = 0
@@ -62,8 +62,6 @@ def calculate_padding(leftover_x, leftover_y, option="Do Not Calculate Padding")
     elif option == "Center":
         pad_left = pad_right = leftover_x / 2
         pad_bottom = pad_top = leftover_y / 2
-    else:
-        pad_left = pad_right = pad_bottom = pad_top = 0
     return pad_left, pad_right, pad_bottom, pad_top
 
 st.title("Gridfinity Baseplate Layout Calculator - Optimized to Avoid Any 1x Dimension Baseplates")
@@ -84,12 +82,6 @@ printer_y_mm = convert_to_mm(printer_y, printer_units)
 space_x_mm = convert_to_mm(space_x, space_units)
 space_y_mm = convert_to_mm(space_y, space_units)
 
-# Padding calculation options with descriptions
-padding_option = st.selectbox("Select Padding Option:", ["Do Not Calculate Padding", "Corner Justify", "Center"],
-                              format_func=lambda x: "No Padding Calculation" if x == "Do Not Calculate Padding"
-                              else "Align to Top-Left Corner (No Padding on Left/Bottom)" if x == "Corner Justify"
-                              else "Center the Grid (Equal Padding on All Sides)")
-
 if st.button("Calculate Layout"):
     layout, bill_of_materials, leftover_x, leftover_y, total_units_x, total_units_y, max_units_x, max_units_y = calculate_baseplates(printer_x_mm, printer_y_mm, space_x_mm, space_y_mm)
 
@@ -100,17 +92,15 @@ if st.button("Calculate Layout"):
     max_plate_size = f"{max_units_x}x{max_units_y} Gridfinity units"
     st.write(f"Maximum Plate Size Your Printer Can Handle: {max_plate_size}")
 
-    # Calculate padding based on the selected option
-    pad_left, pad_right, pad_bottom, pad_top = calculate_padding(leftover_x, leftover_y, padding_option)
-
-    # Display Bill of Materials
     st.write("Bill of Materials:")
     for size, quantity in bill_of_materials.items():
         st.write(f"{quantity} x {size}")
 
-    # Display Padding Details if applicable
-    if padding_option != "Do Not Calculate Padding":
-        st.write(f"Padding Details: \n- Left: {pad_left} mm\n- Right: {pad_right} mm\n- Bottom: {pad_bottom} mm\n- Top: {pad_top} mm")
+    # Padding calculation options
+    padding_option = st.selectbox("Select Padding Option:", ["Justify", "Center"])
+    pad_left, pad_right, pad_bottom, pad_top = calculate_padding(leftover_x, leftover_y, padding_option)
+
+    st.write(f"Padding (Left, Right, Bottom, Top): {pad_left} mm, {pad_right} mm, {pad_bottom} mm, {pad_top} mm")
 
     fig, ax = plt.subplots()
     ax.imshow(layout, cmap='tab20', origin='lower', extent=[0, total_units_x * 42, 0, total_units_y * 42])

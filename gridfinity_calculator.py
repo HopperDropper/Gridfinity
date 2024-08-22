@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import io
 
 # Function to convert inches to millimeters if needed
 def convert_to_mm(value, units):
@@ -47,20 +48,27 @@ def determine_padding(plate_matrix, leftover_x, leftover_y, padding_option):
         plate_y = max_row - min_row + 1
 
         padding_info = []
+        fitx, fity = 0, 0
         if padding_option == "Corner Justify":
             if max_col == x - 1 and leftover_x > 0:  # Rightmost plate
                 padding_info.append(f"{round(leftover_x, 1)}mm Right")
+                fitx = 1
             if max_row == y - 1 and leftover_y > 0:  # Topmost plate
                 padding_info.append(f"{round(leftover_y, 1)}mm Top")
+                fity = 1
         elif padding_option == "Center Justify":
             if min_col == 0 and leftover_x > 0:  # Leftmost plate
                 padding_info.append(f"{round(leftover_x / 2, 1)}mm Left")
+                fitx = -1
             if max_col == x - 1 and leftover_x > 0:  # Rightmost plate
                 padding_info.append(f"{round(leftover_x / 2, 1)}mm Right")
+                fitx = 1
             if min_row == 0 and leftover_y > 0:  # Bottommost plate
                 padding_info.append(f"{round(leftover_y / 2, 1)}mm Bottom")
+                fity = -1
             if max_row == y - 1 and leftover_y > 0:  # Topmost plate
                 padding_info.append(f"{round(leftover_y / 2, 1)}mm Top")
+                fity = 1
 
         plate_key = f"{plate_x}x{plate_y}"
         if padding_info:
@@ -113,6 +121,26 @@ def summarize_bom(plate_matrix):
 
     return bill_of_materials
 
+def generate_openscad_code(gridx, gridy, padding_x=0, padding_y=0, fitx=0, fity=0):
+    # Generate OpenSCAD code
+    scad_code = f"""include <gridfinity-rebuilt-baseplate.scad>;
+
+// Override parameters here
+gridx = {gridx};
+gridy = {gridy};
+distancex = {gridx * 42 + padding_x};
+distancey = {gridy * 42 + padding_y};
+fitx = {fitx};
+fity = {fity};
+style_plate = 0;
+enable_magnet = false;
+style_hole = 0;
+
+// Call the function after parameter overrides
+gridfinityBaseplate([gridx, gridy], l_grid, [distancex, distancey], style_plate, hole_options, style_hole, [fitx, fity]);
+"""
+    return scad_code
+
 st.title("Gridfinity Baseplate Layout Calculator - Optimized to Avoid Any 1x Dimension Baseplates")
 
 # Dropdowns for units selection
@@ -137,18 +165,77 @@ padding_option = st.selectbox("Select Padding Calculation Option:", ["Corner Jus
 if st.button("Calculate Layout"):
     layout, leftover_x, leftover_y, total_units_x, total_units_y, max_units_x, max_units_y = calculate_baseplates(printer_x_mm, printer_y_mm, space_x_mm, space_y_mm)
 
+    # Store results in session state
+    st.session_state.layout = layout
+    st.session_state.leftover_x = leftover_x
+    st.session_state.leftover_y = leftover_y
+    st.session_state.total_units_x = total_units_x
+    st.session_state.total_units_y = total_units_y
+
+    # Display results
     st.write(f"Total Fill Area Gridfinity units (X x Y): {total_units_x} x {total_units_y}")
     st.write(f"Leftover X distance: {round(leftover_x, 1)} mm")
     st.write(f"Leftover Y distance: {round(leftover_y, 1)} mm")
-    
     max_plate_size = f"{max_units_x}x{max_units_y} Gridfinity units"
     st.write(f"Maximum Plate Size Your Printer Can Handle: {max_plate_size}")
+
+if 'layout' in st.session_state:
+    layout = st.session_state.layout
+    leftover_x = st.session_state.leftover_x
+    leftover_y = st.session_state.leftover_y
+    total_units_x = st.session_state.total_units_x
+    total_units_y = st.session_state.total_units_y
 
     if padding_option != "No Padding Calculation":
         bill_of_materials_with_padding = determine_padding(layout, leftover_x, leftover_y, padding_option)
         st.write("Bill of Materials with Padding:")
+        
         for size, quantity in bill_of_materials_with_padding.items():
             st.write(f"{quantity} x {size}")
+            size_part = size.split(' ')[0]
+            gridx, gridy = map(int, size_part.split('x'))
+
+            # Extract padding based on size
+            if padding_option == "Corner Justify":
+                padding_x = leftover_x if 'Right' in size else 0
+                padding_y = leftover_y if 'Top' in size else 0
+                fitx, fity = 0, 0
+                if 'Left' in size:
+                    fitx = -1
+                elif 'Right' in size:
+                    fitx = 1
+                if 'Bottom' in size:
+                    fity = -1
+                elif 'Top' in size:
+                    fity = 1
+
+            elif padding_option == "Center Justify":
+                # Center Justify: split padding equally between both sides
+                padding_x = leftover_x / 2
+                padding_y = leftover_y / 2
+                fitx, fity = 0, 0
+                if 'Left' in size:
+                    fitx = -1
+                elif 'Right' in size:
+                    fitx = 1
+                if 'Bottom' in size:
+                    fity = -1
+                elif 'Top' in size:
+                    fity = 1  # Always apply padding on both sides equally
+
+            # Download button
+            scad_code = generate_openscad_code(gridx, gridy, padding_x, padding_y, fitx, fity)
+            buffer = io.BytesIO()
+            buffer.write(scad_code.encode())
+            buffer.seek(0)
+
+            st.download_button(
+                label=f"Download OpenSCAD Code for {size}",
+                data=buffer,
+                file_name=f"OpenSCAD_Code_{size.replace(' ', '_')}.txt",
+                mime="text/plain"
+            )
+
     else:
         # Summarize the plates without padding
         bill_of_materials = summarize_bom(layout)
@@ -156,6 +243,23 @@ if st.button("Calculate Layout"):
         for size, quantity in bill_of_materials.items():
             st.write(f"{quantity} x {size}")
 
+            size_part = size.split(' ')[0]
+            gridx, gridy = map(int, size_part.split('x'))
+
+            # Download button
+            scad_code = generate_openscad_code(gridx, gridy)
+            buffer = io.BytesIO()
+            buffer.write(scad_code.encode())
+            buffer.seek(0)
+
+            st.download_button(
+                label=f"Download OpenSCAD Code for {size}",
+                data=buffer,
+                file_name=f"OpenSCAD_Code_{size.replace(' ', '_')}.txt",
+                mime="text/plain"
+            )
+
+    # Plotting section
     fig, ax = plt.subplots()
 
     # Plot the leftover space in grey

@@ -214,14 +214,20 @@ if 'layout' in st.session_state:
                 padding_x = leftover_x / 2
                 padding_y = leftover_y / 2
                 fitx, fity = 0, 0
-                if 'Left' in size:
+                if 'Left' in size and 'Right' in size:
+                    fitx = 0  # Center padding
+                elif 'Left' in size:
                     fitx = -1
                 elif 'Right' in size:
                     fitx = 1
-                if 'Bottom' in size:
+
+                # Adjust fity based on top/bottom padding
+                if 'Top' in size and 'Bottom' in size:
+                    fity = 0  # Center padding   
+                elif 'Bottom' in size:
                     fity = -1
                 elif 'Top' in size:
-                    fity = 1  # Always apply padding on both sides equally
+                    fity = 1
 
             # Download button
             scad_code = generate_openscad_code(gridx, gridy, padding_x, padding_y, fitx, fity)

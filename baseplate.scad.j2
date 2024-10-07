@@ -1,0 +1,15 @@
+include <gridfinity-rebuilt-baseplate.scad>;
+
+// Override parameters here
+gridx = {{ grid_x }};
+gridy = {{ grid_y }};
+distancex = {{ grid_x * 42 + padding_x }};
+distancey = {{ grid_y * 42 + padding_y }};
+fitx = {{ fit_x }};
+fity = {{ fit_y }};
+style_plate = 0;
+enable_magnet = false;
+style_hole = 0;
+
+// Call the function after parameter overrides
+gridfinityBaseplate([gridx, gridy], l_grid, [distancex, distancey], style_plate, hole_options, style_hole, [fitx, fity]);

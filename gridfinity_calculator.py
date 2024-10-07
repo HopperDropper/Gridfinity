@@ -2,6 +2,10 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import io
+from enum import Enum
+from jinja2 import Template
+
+UNITS = ["Millimeters", "Inches"]
 
 # Function to convert inches to millimeters if needed
 def convert_to_mm(value, units):
@@ -12,12 +16,12 @@ def convert_to_mm(value, units):
 def build_plate_matrix(total_units_x, total_units_y, max_units_x, max_units_y):
     plate_matrix = np.zeros((total_units_y, total_units_x), dtype=int)
     plate_counter = 1
-    
+
     for y in range(0, total_units_y, max_units_y):
         for x in range(0, total_units_x, max_units_x):
             plate_x = min(max_units_x, total_units_x - x)
             plate_y = min(max_units_y, total_units_y - y)
-            
+
             # Prevent the last row/column from being a 1x dimension
             if plate_x == 1 and x > 0:
                 plate_matrix[y:y + plate_y, x - 1:x + 1] = plate_counter
@@ -27,7 +31,7 @@ def build_plate_matrix(total_units_x, total_units_y, max_units_x, max_units_y):
                 plate_matrix[y:y + plate_y, x:x + plate_x] = plate_counter
 
             plate_counter += 1
-    
+
     return plate_matrix, plate_counter - 1
 
 def determine_padding(plate_matrix, leftover_x, leftover_y, padding_option):
@@ -38,7 +42,7 @@ def determine_padding(plate_matrix, leftover_x, leftover_y, padding_option):
     for plate in unique_plates:
         if plate == 0:
             continue
-        
+
         # Find the bounding box of this plate
         rows, cols = np.where(plate_matrix == plate)
         min_row, max_row = rows.min(), rows.max()
@@ -73,7 +77,7 @@ def determine_padding(plate_matrix, leftover_x, leftover_y, padding_option):
         plate_key = f"{plate_x}x{plate_y}"
         if padding_info:
             plate_key += f" ({', '.join(padding_info)})"
-        
+
         if plate_key in bill_of_materials_with_padding:
             bill_of_materials_with_padding[plate_key] += 1
         else:
@@ -121,31 +125,22 @@ def summarize_bom(plate_matrix):
 
     return bill_of_materials
 
-def generate_openscad_code(gridx, gridy, padding_x=0, padding_y=0, fitx=0, fity=0):
-    # Generate OpenSCAD code
-    scad_code = f"""include <gridfinity-rebuilt-baseplate.scad>;
+def generate_openscad_code(gridx: int, gridy: int, padding_x: int=0, padding_y: int=0, fitx: int=0, fity: int=0):
+    with open("baseplate.scad.j2", "r") as f:
+        scad_template = Template(str(f.read()))
 
-// Override parameters here
-gridx = {gridx};
-gridy = {gridy};
-distancex = {gridx * 42 + padding_x};
-distancey = {gridy * 42 + padding_y};
-fitx = {fitx};
-fity = {fity};
-style_plate = 0;
-enable_magnet = false;
-style_hole = 0;
-
-// Call the function after parameter overrides
-gridfinityBaseplate([gridx, gridy], l_grid, [distancex, distancey], style_plate, hole_options, style_hole, [fitx, fity]);
-"""
-    return scad_code
+    return scad_template.render(grid_x=gridx,
+                                grid_y=gridy,
+                                padding_x=padding_x,
+                                padding_y=padding_y,
+                                fit_x=fitx,
+                                fit_y=fity)
 
 st.title("Gridfinity Baseplate Layout Calculator - Optimized to Avoid Any 1x Dimension Baseplates")
 
 # Dropdowns for units selection
-printer_units = st.selectbox("Select Printer Dimensions Units:", ["Millimeters", "Inches"])
-space_units = st.selectbox("Select Area Dimensions Units:", ["Millimeters", "Inches"])
+printer_units = st.selectbox("Select Printer Dimensions Units:", options=UNITS)
+space_units = st.selectbox("Select Area Dimensions Units:", options=UNITS, )
 
 # Inputs with updated labels
 printer_x = st.number_input(f"Printer Max Build Size X ({printer_units}):", value=227 if printer_units == "Millimeters" else 8.94)
@@ -189,7 +184,7 @@ if 'layout' in st.session_state:
     if padding_option != "No Padding Calculation":
         bill_of_materials_with_padding = determine_padding(layout, leftover_x, leftover_y, padding_option)
         st.write("Bill of Materials with Padding:")
-        
+
         for size, quantity in bill_of_materials_with_padding.items():
             st.write(f"{quantity} x {size}")
             size_part = size.split(' ')[0]
@@ -223,7 +218,7 @@ if 'layout' in st.session_state:
 
                 # Adjust fity based on top/bottom padding
                 if 'Top' in size and 'Bottom' in size:
-                    fity = 0  # Center padding   
+                    fity = 0  # Center padding
                 elif 'Bottom' in size:
                     fity = -1
                 elif 'Top' in size:
@@ -238,7 +233,7 @@ if 'layout' in st.session_state:
             st.download_button(
                 label=f"Download OpenSCAD Code for {size}",
                 data=buffer,
-                file_name=f"OpenSCAD_Code_{size.replace(' ', '_')}.txt",
+                file_name=f"OpenSCAD_Code_{size.replace(' ', '_')}.scad",
                 mime="text/plain"
             )
 
@@ -261,7 +256,7 @@ if 'layout' in st.session_state:
             st.download_button(
                 label=f"Download OpenSCAD Code for {size}",
                 data=buffer,
-                file_name=f"OpenSCAD_Code_{size.replace(' ', '_')}.txt",
+                file_name=f"OpenSCAD_Code_{size.replace(' ', '_')}.scad",
                 mime="text/plain"
             )
 

@@ -5,7 +5,7 @@ import io
 from enum import Enum
 from jinja2 import Template
 
-UNITS = ["Inches", "Millimeters"]
+UNITS = ["Millimeters", "Inches"]
 
 # Function to convert inches to millimeters if needed
 def convert_to_mm(value, units):
@@ -140,7 +140,7 @@ st.title("Gridfinity Baseplate Layout Calculator - Optimized to Avoid Any 1x Dim
 
 # Dropdowns for units selection
 printer_units = st.selectbox("Select Printer Dimensions Units:", options=UNITS)
-space_units = st.selectbox("Select Area Dimensions Units:", options=UNITS)
+space_units = st.selectbox("Select Area Dimensions Units:", options=UNITS, )
 
 # Inputs with updated labels
 printer_x = st.number_input(f"Printer Max Build Size X ({printer_units}):", value=227 if printer_units == "Millimeters" else 8.94)

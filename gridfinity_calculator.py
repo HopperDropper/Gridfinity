@@ -49,6 +49,28 @@ def build_plate_matrix(total_units_x, total_units_y, max_units_x, max_units_y):
     return plate_matrix, plate_counter - 1
 
 
+# Reduce max_units so that every plate (including its padding) fits in the printer.
+# The old approach checked max_units * 42 + leftover, but the rightmost/topmost plate
+# is often smaller than max_units — compute_splits gives the actual plate sizes.
+def adjust_max_units_for_padding(total_units_x, total_units_y, max_units_x, max_units_y,
+                                 leftover_x, leftover_y, printer_x_mm, printer_y_mm, padding_option):
+    while True:
+        x_splits = compute_splits(total_units_x, max_units_x)
+        y_splits = compute_splits(total_units_y, max_units_y)
+        if padding_option == "Corner Justify":
+            x_ok = x_splits[-1] * 42 + leftover_x <= printer_x_mm
+            y_ok = y_splits[-1] * 42 + leftover_y <= printer_y_mm
+        else:  # Center Justify: largest plate + half padding on each edge
+            x_ok = x_splits[0] * 42 + leftover_x / 2 <= printer_x_mm
+            y_ok = y_splits[0] * 42 + leftover_y / 2 <= printer_y_mm
+        if x_ok and y_ok:
+            return max_units_x, max_units_y
+        if not x_ok:
+            max_units_x -= 1
+        if not y_ok:
+            max_units_y -= 1
+
+
 def determine_padding(plate_matrix, leftover_x, leftover_y, padding_option):
     y, x = plate_matrix.shape
     unique_plates = np.unique(plate_matrix)
@@ -198,14 +220,10 @@ def main():
             printer_x_mm, printer_y_mm, space_x_mm, space_y_mm)
 
         if padding_option != "No Padding Calculation":
-            # The following loop ensures every baseplate (including padding) will fit in the printer's specified
-            # size.  If either x or y is too big, try again by adjusting the printer size down by 1 mm.  Continue to do
-            # so, until all fits within the max allowed print size.
-            adjustment = 1
-            while (max_units_x * 42) + leftover_x >= printer_x_mm or (max_units_y * 42) + leftover_y >= printer_y_mm:
-                layout, leftover_x, leftover_y, total_units_x, total_units_y, max_units_x, max_units_y = (
-                    calculate_baseplates(printer_x_mm - adjustment, printer_y_mm - adjustment, space_x_mm, space_y_mm))
-                adjustment += 1
+            max_units_x, max_units_y = adjust_max_units_for_padding(
+                total_units_x, total_units_y, max_units_x, max_units_y,
+                leftover_x, leftover_y, printer_x_mm, printer_y_mm, padding_option)
+            layout, _ = build_plate_matrix(total_units_x, total_units_y, max_units_x, max_units_y)
 
         # Store results in session state
         st.session_state.layout = layout

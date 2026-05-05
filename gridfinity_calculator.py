@@ -2,6 +2,7 @@ import io
 import zipfile
 
 import matplotlib.pyplot as plt
+from matplotlib import patheffects
 import numpy as np
 import streamlit as st
 from jinja2 import Template
@@ -47,6 +48,18 @@ def build_plate_matrix(total_units_x, total_units_y, max_units_x, max_units_y):
         y_pos += plate_y
 
     return plate_matrix, plate_counter - 1
+
+
+def get_plate_centers(layout, grid_size=42):
+    centers = {}
+    for plate_id in np.unique(layout):
+        if plate_id == 0:
+            continue
+        rows, cols = np.where(layout == plate_id)
+        center_x = (cols.min() + cols.max() + 1) / 2 * grid_size
+        center_y = (rows.min() + rows.max() + 1) / 2 * grid_size
+        centers[int(plate_id)] = (center_x, center_y)
+    return centers
 
 
 # Reduce max_units so that every plate (including its padding) fits in the printer.
@@ -368,6 +381,13 @@ def main():
             ax.hlines(y, 0, total_units_x * 42, color='white', linewidth=1.5, zorder=4)
         for x in np.arange(0, total_units_x * 42 + 42, 42):
             ax.vlines(x, 0, total_units_y * 42, color='white', linewidth=1.5, zorder=4)
+
+        for plate_id, (cx, cy) in get_plate_centers(layout).items():
+            ax.text(cx, cy, str(plate_id),
+                    ha='center', va='center',
+                    fontsize=10, fontweight='bold', color='white',
+                    path_effects=[patheffects.withStroke(linewidth=2, foreground='black')],
+                    zorder=5)
 
         ax.set_xlim(-leftover_x / 2 if padding_option == "Center Justify" else 0,
                     total_units_x * 42 + leftover_x / 2 if padding_option == "Center Justify" else total_units_x * 42 + leftover_x)

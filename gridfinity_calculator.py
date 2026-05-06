@@ -62,6 +62,7 @@ def get_plate_centers(layout, grid_size=42):
     return centers
 
 
+
 # Reduce max_units so that every plate (including its padding) fits in the printer.
 # The old approach checked max_units * 42 + leftover, but the rightmost/topmost plate
 # is often smaller than max_units — compute_splits gives the actual plate sizes.

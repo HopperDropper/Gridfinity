@@ -2,6 +2,7 @@ import io
 import zipfile
 
 import matplotlib.pyplot as plt
+from matplotlib import patheffects
 import numpy as np
 import streamlit as st
 from jinja2 import Template
@@ -49,6 +50,19 @@ def build_plate_matrix(total_units_x, total_units_y, max_units_x, max_units_y):
     return plate_matrix, plate_counter - 1
 
 
+def get_plate_centers(layout, grid_size=42):
+    centers = {}
+    for plate_id in np.unique(layout):
+        if plate_id == 0:
+            continue
+        rows, cols = np.where(layout == plate_id)
+        center_x = (cols.min() + cols.max() + 1) / 2 * grid_size
+        center_y = (rows.min() + rows.max() + 1) / 2 * grid_size
+        centers[int(plate_id)] = (center_x, center_y)
+    return centers
+
+
+
 # Reduce max_units so that every plate (including its padding) fits in the printer.
 # The old approach checked max_units * 42 + leftover, but the rightmost/topmost plate
 # is often smaller than max_units — compute_splits gives the actual plate sizes.
@@ -73,14 +87,9 @@ def adjust_max_units_for_padding(total_units_x, total_units_y, max_units_x, max_
 
 def determine_padding(plate_matrix, leftover_x, leftover_y, padding_option):
     y, x = plate_matrix.shape
-    unique_plates = np.unique(plate_matrix)
-    bill_of_materials_with_padding = {}
+    result = {}
 
-    for plate in unique_plates:
-        if plate == 0:
-            continue
-
-        # Find the bounding box of this plate
+    for plate in [p for p in np.unique(plate_matrix) if p != 0]:
         rows, cols = np.where(plate_matrix == plate)
         min_row, max_row = rows.min(), rows.max()
         min_col, max_col = cols.min(), cols.max()
@@ -90,37 +99,65 @@ def determine_padding(plate_matrix, leftover_x, leftover_y, padding_option):
 
         padding_info = []
         fitx, fity = 0, 0
+        padding_x, padding_y = 0.0, 0.0
         if padding_option == "Corner Justify":
-            if max_col == x - 1 and leftover_x > 0:  # Rightmost plate
+            if max_col == x - 1 and leftover_x > 0:
                 padding_info.append(f"{round(leftover_x, 1)}mm Right")
                 fitx = 1
-            if max_row == y - 1 and leftover_y > 0:  # Topmost plate
+                padding_x = leftover_x
+            if max_row == y - 1 and leftover_y > 0:
                 padding_info.append(f"{round(leftover_y, 1)}mm Top")
                 fity = 1
+                padding_y = leftover_y
         elif padding_option == "Center Justify":
-            if min_col == 0 and leftover_x > 0:  # Leftmost plate
-                padding_info.append(f"{round(leftover_x / 2, 1)}mm Left")
-                fitx = -1
-            if max_col == x - 1 and leftover_x > 0:  # Rightmost plate
-                padding_info.append(f"{round(leftover_x / 2, 1)}mm Right")
-                fitx = 1
-            if min_row == 0 and leftover_y > 0:  # Bottommost plate
-                padding_info.append(f"{round(leftover_y / 2, 1)}mm Bottom")
-                fity = -1
-            if max_row == y - 1 and leftover_y > 0:  # Topmost plate
-                padding_info.append(f"{round(leftover_y / 2, 1)}mm Top")
-                fity = 1
+            is_leftmost = min_col == 0
+            is_rightmost = max_col == x - 1
+            is_bottommost = min_row == 0
+            is_topmost = max_row == y - 1
+            if leftover_x > 0:
+                if is_leftmost and is_rightmost:
+                    fitx = 0
+                    padding_x = leftover_x / 2
+                    padding_info.append(f"{round(leftover_x / 2, 1)}mm Left")
+                    padding_info.append(f"{round(leftover_x / 2, 1)}mm Right")
+                elif is_leftmost:
+                    fitx = -1
+                    padding_x = leftover_x / 2
+                    padding_info.append(f"{round(leftover_x / 2, 1)}mm Left")
+                elif is_rightmost:
+                    fitx = 1
+                    padding_x = leftover_x / 2
+                    padding_info.append(f"{round(leftover_x / 2, 1)}mm Right")
+            if leftover_y > 0:
+                if is_bottommost and is_topmost:
+                    fity = 0
+                    padding_y = leftover_y / 2
+                    padding_info.append(f"{round(leftover_y / 2, 1)}mm Bottom")
+                    padding_info.append(f"{round(leftover_y / 2, 1)}mm Top")
+                elif is_bottommost:
+                    fity = -1
+                    padding_y = leftover_y / 2
+                    padding_info.append(f"{round(leftover_y / 2, 1)}mm Bottom")
+                elif is_topmost:
+                    fity = 1
+                    padding_y = leftover_y / 2
+                    padding_info.append(f"{round(leftover_y / 2, 1)}mm Top")
 
-        plate_key = f"{plate_x}x{plate_y}"
+        label = f"{plate_x}x{plate_y}"
         if padding_info:
-            plate_key += f" ({', '.join(padding_info)})"
+            label += f" ({', '.join(padding_info)})"
 
-        if plate_key in bill_of_materials_with_padding:
-            bill_of_materials_with_padding[plate_key] += 1
-        else:
-            bill_of_materials_with_padding[plate_key] = 1
+        result[int(plate)] = {
+            'gridx': plate_x,
+            'gridy': plate_y,
+            'fitx': fitx,
+            'fity': fity,
+            'padding_x': padding_x,
+            'padding_y': padding_y,
+            'label': label,
+        }
 
-    return bill_of_materials_with_padding
+    return result
 
 
 def calculate_baseplates(printer_x, printer_y, space_x, space_y, grid_size=42):
@@ -141,28 +178,13 @@ def calculate_baseplates(printer_x, printer_y, space_x, space_y, grid_size=42):
 
 
 def summarize_bom(plate_matrix):
-    y, x = plate_matrix.shape
-    unique_plates = np.unique(plate_matrix)
-    bill_of_materials = {}
-
-    for plate in unique_plates:
-        if plate == 0:
-            continue
-
+    result = {}
+    for plate in [p for p in np.unique(plate_matrix) if p != 0]:
         rows, cols = np.where(plate_matrix == plate)
-        min_row, max_row = rows.min(), rows.max()
-        min_col, max_col = cols.min(), cols.max()
-
-        plate_x = max_col - min_col + 1
-        plate_y = max_row - min_row + 1
-
-        plate_key = f"{plate_x}x{plate_y}"
-        if plate_key in bill_of_materials:
-            bill_of_materials[plate_key] += 1
-        else:
-            bill_of_materials[plate_key] = 1
-
-    return bill_of_materials
+        plate_x = cols.max() - cols.min() + 1
+        plate_y = rows.max() - rows.min() + 1
+        result[int(plate)] = (plate_x, plate_y)
+    return result
 
 
 def generate_openscad_code(gridx: int, gridy: int, padding_x: int = 0, padding_y: int = 0, fitx: int = 0,
@@ -252,65 +274,29 @@ def main():
             bill_of_materials_with_padding = determine_padding(layout, leftover_x, leftover_y, padding_option)
             st.write("Bill of Materials with Padding:")
 
-            for size, quantity in bill_of_materials_with_padding.items():
-                st.write(f"{quantity} x {size}")
-                size_part = size.split(' ')[0]
-                gridx, gridy = map(int, size_part.split('x'))
+            for plate_id, info in bill_of_materials_with_padding.items():
+                gridx = info['gridx']
+                gridy = info['gridy']
+                fitx = info['fitx']
+                fity = info['fity']
+                padding_x = info['padding_x']
+                padding_y = info['padding_y']
+                label = info['label']
 
-                # Extract padding based on size
-                if padding_option == "Corner Justify":
-                    padding_x = leftover_x if 'Right' in size else 0
-                    padding_y = leftover_y if 'Top' in size else 0
-                    fitx, fity = 0, 0
-                    if 'Left' in size:
-                        fitx = -1
-                    elif 'Right' in size:
-                        fitx = 1
-                    if 'Bottom' in size:
-                        fity = -1
-                    elif 'Top' in size:
-                        fity = 1
+                st.write(f"Plate {plate_id}: {label}")
 
-                elif padding_option == "Center Justify":
-                    # Center Justify: split padding equally between both sides
-                    padding_x = leftover_x / 2
-                    padding_y = leftover_y / 2
-                    fitx, fity = 0, 0
-                    if 'Left' in size and 'Right' in size:
-                        fitx = 0  # Center padding
-                    elif 'Left' in size:
-                        fitx = -1
-                    elif 'Right' in size:
-                        fitx = 1
+                scad_code = generate_openscad_code(gridx, gridy, padding_x, padding_y, fitx, fity)
+                filename = f"Plate_{plate_id}_{label.replace(' ', '_')}.scad"
+                scad_dict[filename] = scad_code
 
-                    # Adjust fity based on top/bottom padding
-                    if 'Top' in size and 'Bottom' in size:
-                        fity = 0  # Center padding
-                    elif 'Bottom' in size:
-                        fity = -1
-                    elif 'Top' in size:
-                        fity = 1
-
-                if (fitx == 0) and (fity == 0):
-                    scad_code = generate_openscad_code(gridx, gridy, 0, 0, fitx, fity)
-                elif (fitx == -1 and fity == 0) or (fitx == 1 and fity == 0):
-                    scad_code = generate_openscad_code(gridx, gridy, padding_x, 0, fitx, fity)
-                elif (fitx == 0 and fity == -1) or (fitx == 0 and fity == 1):
-                    scad_code = generate_openscad_code(gridx, gridy, 0, padding_y, fitx, fity)
-                else:
-                    scad_code = generate_openscad_code(gridx, gridy, padding_x, padding_y, fitx, fity)
-
-                scad_dict[f"OpenSCAD_Code_{size.replace(' ', '_')}.scad"] = scad_code
-
-                # Download button
                 buffer = io.BytesIO()
                 buffer.write(scad_code.encode())
                 buffer.seek(0)
 
                 st.download_button(
-                    label=f"Download OpenSCAD Code for {size}",
+                    label=f"Download OpenSCAD Code for Plate {plate_id} ({label})",
                     data=buffer,
-                    file_name=f"OpenSCAD_Code_{size.replace(' ', '_')}.scad",
+                    file_name=filename,
                     mime="text/plain"
                 )
 
@@ -327,22 +313,20 @@ def main():
             bill_of_materials = summarize_bom(layout)
             st.write("Bill of Materials:")
 
-            for size, quantity in bill_of_materials.items():
-                st.write(f"{quantity} x {size}")
-                size_part = size.split(' ')[0]
-                gridx, gridy = map(int, size_part.split('x'))
+            for plate_id, (gridx, gridy) in bill_of_materials.items():
+                st.write(f"Plate {plate_id}: {gridx}x{gridy}")
 
-                # Download button
                 scad_code = generate_openscad_code(gridx, gridy)
-                scad_dict[f"OpenSCAD_Code_{size.replace(' ', '_')}.scad"] = scad_code
+                filename = f"Plate_{plate_id}_{gridx}x{gridy}.scad"
+                scad_dict[filename] = scad_code
                 buffer = io.BytesIO()
                 buffer.write(scad_code.encode())
                 buffer.seek(0)
 
                 st.download_button(
-                    label=f"Download OpenSCAD Code for {size}",
+                    label=f"Download OpenSCAD Code for Plate {plate_id} ({gridx}x{gridy})",
                     data=buffer,
-                    file_name=f"OpenSCAD_Code_{size.replace(' ', '_')}.scad",
+                    file_name=filename,
                     mime="text/plain"
                 )
 
@@ -368,6 +352,13 @@ def main():
             ax.hlines(y, 0, total_units_x * 42, color='white', linewidth=1.5, zorder=4)
         for x in np.arange(0, total_units_x * 42 + 42, 42):
             ax.vlines(x, 0, total_units_y * 42, color='white', linewidth=1.5, zorder=4)
+
+        for plate_id, (cx, cy) in get_plate_centers(layout).items():
+            ax.text(cx, cy, str(plate_id),
+                    ha='center', va='center',
+                    fontsize=10, fontweight='bold', color='white',
+                    path_effects=[patheffects.withStroke(linewidth=2, foreground='black')],
+                    zorder=5)
 
         ax.set_xlim(-leftover_x / 2 if padding_option == "Center Justify" else 0,
                     total_units_x * 42 + leftover_x / 2 if padding_option == "Center Justify" else total_units_x * 42 + leftover_x)

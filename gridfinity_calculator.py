@@ -16,24 +16,35 @@ def convert_to_mm(value, units):
     return value
 
 
+# Split total units into printable chunks, merging a 1-unit remainder into the previous chunk
+def compute_splits(total, max_chunk):
+    chunks = []
+    remaining = total
+    while remaining > 0:
+        chunk = min(max_chunk, remaining)
+        chunks.append(chunk)
+        remaining -= chunk
+    if len(chunks) > 1 and chunks[-1] == 1 and chunks[-2] >= 3:
+        chunks[-2] -= 1
+        chunks[-1] = 2
+    return chunks
+
+
 def build_plate_matrix(total_units_x, total_units_y, max_units_x, max_units_y):
     plate_matrix = np.zeros((total_units_y, total_units_x), dtype=int)
     plate_counter = 1
 
-    for y in range(0, total_units_y, max_units_y):
-        for x in range(0, total_units_x, max_units_x):
-            plate_x = min(max_units_x, total_units_x - x)
-            plate_y = min(max_units_y, total_units_y - y)
+    x_splits = compute_splits(total_units_x, max_units_x)
+    y_splits = compute_splits(total_units_y, max_units_y)
 
-            # Prevent the last row/column from being a 1x dimension
-            if plate_x == 1 and x > 0:
-                plate_matrix[y:y + plate_y, x - 1:x + 1] = plate_counter
-            elif plate_y == 1 and y > 0:
-                plate_matrix[y - 1:y + 1, x:x + plate_x] = plate_counter
-            else:
-                plate_matrix[y:y + plate_y, x:x + plate_x] = plate_counter
-
+    y_pos = 0
+    for plate_y in y_splits:
+        x_pos = 0
+        for plate_x in x_splits:
+            plate_matrix[y_pos:y_pos + plate_y, x_pos:x_pos + plate_x] = plate_counter
             plate_counter += 1
+            x_pos += plate_x
+        y_pos += plate_y
 
     return plate_matrix, plate_counter - 1
 
